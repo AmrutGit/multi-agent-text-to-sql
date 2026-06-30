@@ -1,0 +1,10 @@
+# Execution-accuracy eval set. gold_sql is the reference answer.
+# Seeded with 3 — YOUR JOB: grow this to 12-15 spanning easy/medium/hard
+# (joins, group-by, subqueries, date filters). These cases ARE the proof you
+# understand correctness, so write them carefully.
+- question: "How many customers are there?"
+  gold_sql: "SELECT COUNT(*) AS n FROM Customers;"
+- question: "List the 5 most expensive products by unit price."
+  gold_sql: "SELECT ProductName, UnitPrice FROM Products ORDER BY UnitPrice DESC LIMIT 5;"
+- question: "Which country has the most customers?"
+  gold_sql: "SELECT Country, COUNT(*) AS n FROM Customers GROUP BY Country ORDER BY n DESC LIMIT 1;"
