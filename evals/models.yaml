@@ -1,0 +1,40 @@
+# Models to benchmark. `api_key_env` is the NAME of an environment variable, never a key.
+# price_in / price_out: USD per 1M tokens. Left null where I could not verify current
+# pricing: fill from the provider's pricing page and cost columns light up in the report
+# (null => cost shown as n/a, never guessed).
+#
+# Add your QLoRA Llama here once it is served. Any OpenAI-compatible server works:
+#   vLLM:      vllm serve <base> --enable-lora --lora-modules sql=<adapter_dir> --port 8001
+#   llama.cpp: llama-server -m merged.gguf --port 8001
+#   Ollama:    base_url http://localhost:11434/v1
+# NOTE: serve it with the SAME prompt format it was fine-tuned on, or accuracy will be
+# understated (see README, "Evaluating the fine-tuned model").
+
+gemini-flash:
+  provider: gemini
+  model: gemini-2.0-flash
+  api_key_env: GOOGLE_API_KEY
+  price_in: null
+  price_out: null
+
+claude-haiku:
+  provider: anthropic
+  model: claude-haiku-5-5
+  api_key_env: ANTHROPIC_API_KEY
+  price_in: null
+  price_out: null
+
+claude-sonnet:
+  provider: anthropic
+  model: claude-sonnet-5-5
+  api_key_env: ANTHROPIC_API_KEY
+  price_in: null
+  price_out: null
+
+qlora-llama:
+  provider: openai_compat
+  model: sql        # the --lora-modules name / served model name
+  base_url: http://localhost:8001/v1
+  api_key_env: ""
+  price_in: 0.0     # marginal API cost only; GPU time is NOT included (state this in the report)
+  price_out: 0.0

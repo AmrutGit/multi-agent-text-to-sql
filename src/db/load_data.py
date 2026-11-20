@@ -6,6 +6,7 @@ Fallback dataset (music store), if you prefer: Chinook —
 """
 import os
 import urllib.request
+
 from src.config import settings
 
 URL = "https://github.com/jpwhite3/northwind-SQLite3/raw/main/dist/northwind.db"

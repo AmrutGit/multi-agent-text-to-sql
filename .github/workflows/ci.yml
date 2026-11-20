@@ -1,0 +1,32 @@
+name: CI
+# Runs on every push and pull request. No LLM keys needed: all model calls are faked.
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10", "3.11"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+          cache-dependency-path: requirements-dev.txt
+      - run: pip install -r requirements-dev.txt
+      - name: Lint
+        run: ruff check .
+      - name: Cache Northwind DB
+        uses: actions/cache@v4
+        with:
+          path: data/northwind.sqlite
+          key: northwind-v1
+      - name: Fetch Northwind (for the tests marked `northwind`)
+        run: python -m src.db.load_data
+      - name: Tests
+        run: pytest -q

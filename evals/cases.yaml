@@ -1,10 +1,81 @@
-# Execution-accuracy eval set. gold_sql is the reference answer.
-# Seeded with 3 — YOUR JOB: grow this to 12-15 spanning easy/medium/hard
-# (joins, group-by, subqueries, date filters). These cases ARE the proof you
-# understand correctness, so write them carefully.
-- question: "How many customers are there?"
+# Execution-accuracy eval set. gold_sql is the reference answer; the agent passes if its
+# result set matches gold's (order-insensitive, see run_eval.py).
+# Dataset notes: this Northwind build has 2012-2023 orders, dates are TEXT beginning
+# 'YYYY-MM-DD', Products.Discontinued is TEXT '0'/'1'.
+# Cases avoid ties at the cut-off (LIMIT n) so there is exactly one correct answer.
+
+# ---- easy: single table ----
+- difficulty: easy
+  question: "How many customers are there?"
   gold_sql: "SELECT COUNT(*) AS n FROM Customers;"
-- question: "List the 5 most expensive products by unit price."
+- difficulty: easy
+  question: "List the 5 most expensive products by unit price."
   gold_sql: "SELECT ProductName, UnitPrice FROM Products ORDER BY UnitPrice DESC LIMIT 5;"
-- question: "Which country has the most customers?"
+- difficulty: easy
+  question: "Which country has the most customers?"
   gold_sql: "SELECT Country, COUNT(*) AS n FROM Customers GROUP BY Country ORDER BY n DESC LIMIT 1;"
+- difficulty: easy
+  question: "How many products are discontinued?"
+  gold_sql: "SELECT COUNT(*) FROM Products WHERE Discontinued = '1';"
+- difficulty: easy
+  question: "What is the average unit price of all products?"
+  gold_sql: "SELECT AVG(UnitPrice) FROM Products;"
+
+# ---- medium: joins / group-by / date filters ----
+- difficulty: medium
+  question: "How many products are in each category? Show the category name and the count."
+  gold_sql: >
+    SELECT c.CategoryName, COUNT(*) FROM Products p
+    JOIN Categories c ON c.CategoryID = p.CategoryID GROUP BY c.CategoryID;
+- difficulty: medium
+  question: "List the names of all products supplied by suppliers in Germany."
+  gold_sql: >
+    SELECT p.ProductName FROM Products p
+    JOIN Suppliers s ON s.SupplierID = p.SupplierID WHERE s.Country = 'Germany';
+- difficulty: medium
+  question: "How many orders were placed in 2016?"
+  gold_sql: "SELECT COUNT(*) FROM Orders WHERE strftime('%Y', OrderDate) = '2016';"
+- difficulty: medium
+  question: "What is the total freight cost for orders shipped to France?"
+  gold_sql: "SELECT SUM(Freight) FROM Orders WHERE ShipCountry = 'France';"
+- difficulty: medium
+  question: "Which employee has handled the most orders? Give their first and last name."
+  gold_sql: >
+    SELECT e.FirstName, e.LastName FROM Orders o
+    JOIN Employees e ON e.EmployeeID = o.EmployeeID
+    GROUP BY e.EmployeeID ORDER BY COUNT(*) DESC LIMIT 1;
+
+# ---- hard: multi-join, aggregation over computed values, subqueries ----
+- difficulty: hard
+  question: "What is the total revenue for each product category? Revenue is unit price times quantity times one minus discount."
+  gold_sql: >
+    SELECT c.CategoryName, SUM(od.UnitPrice * od.Quantity * (1 - od.Discount))
+    FROM "Order Details" od
+    JOIN Products p ON p.ProductID = od.ProductID
+    JOIN Categories c ON c.CategoryID = p.CategoryID
+    GROUP BY c.CategoryID;
+- difficulty: hard
+  question: "Who are the top 3 customers by total order revenue? Show company name and revenue."
+  gold_sql: >
+    SELECT c.CompanyName, SUM(od.UnitPrice * od.Quantity * (1 - od.Discount)) AS revenue
+    FROM Customers c
+    JOIN Orders o ON o.CustomerID = c.CustomerID
+    JOIN "Order Details" od ON od.OrderID = o.OrderID
+    GROUP BY c.CustomerID ORDER BY revenue DESC LIMIT 3;
+- difficulty: hard
+  question: "List the products whose unit price is above the average unit price."
+  gold_sql: >
+    SELECT ProductName FROM Products
+    WHERE UnitPrice > (SELECT AVG(UnitPrice) FROM Products);
+- difficulty: hard
+  question: "Which customers have placed more than 250 orders? Show company name and order count."
+  gold_sql: >
+    SELECT c.CompanyName, COUNT(*) AS n FROM Customers c
+    JOIN Orders o ON o.CustomerID = c.CustomerID
+    GROUP BY c.CustomerID HAVING n > 250;
+- difficulty: hard
+  question: "Which shipper carried the most orders, and how many?"
+  gold_sql: >
+    SELECT s.CompanyName, COUNT(*) AS n FROM Orders o
+    JOIN Shippers s ON s.ShipperID = o.ShipVia
+    GROUP BY s.ShipperID ORDER BY n DESC LIMIT 1;

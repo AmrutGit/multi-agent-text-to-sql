@@ -1,0 +1,4 @@
+-r requirements.txt
+pytest
+ruff
+httpx2  # starlette's TestClient (used by tests/test_api.py); falls back to httpx if absent
