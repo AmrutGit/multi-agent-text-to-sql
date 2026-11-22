@@ -1,6 +1,7 @@
 import json
 import sqlite3
 from collections import Counter
+from pathlib import Path
 
 import pytest
 
@@ -20,7 +21,7 @@ def test_load_bird_layout_and_difficulty_mapping(tmp_path):
          "difficulty": "challenging"}]))
     [ex] = load_bird(str(tmp_path))
     assert ex.id == "bird-7" and ex.difficulty == "hard" and ex.evidence == "hint"
-    assert ex.db_path.endswith("dev_databases/d1/d1.sqlite")
+    assert Path(ex.db_path).parts[-3:] == ("dev_databases", "d1", "d1.sqlite")  # OS-independent
 
 
 def test_load_spider_layout(tmp_path):
