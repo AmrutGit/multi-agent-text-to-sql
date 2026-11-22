@@ -167,8 +167,8 @@ Things that will otherwise make the comparison unfair (check each):
   `--retries 2` (full system) for every model; the difference is the value of the loop.
 - **Latency.** Use `--workers 1` for clean per-question latency; with more workers
   requests queue and p95 reflects load, not the model.
-- **Cost.** API models: tokens x price from `models.yaml` (prices are left blank rather
-  than guessed; fill from the provider's pricing page). Local model: API cost is
+- **Cost.** API models: tokens x price from `models.yaml` (prices copied from the
+  providers' pricing pages, with the date read). Local model: API cost is
   zero but GPU time is not: compute `GPU $/hour / (questions/hour)` from a
   `--workers 1` run and add it to the report by hand.
 
