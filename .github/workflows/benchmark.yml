@@ -1,6 +1,6 @@
 name: Benchmark
 # Manual only: it calls paid APIs, so it is deliberately NOT run on every push.
-# Add API keys as repository secrets (ANTHROPIC_API_KEY, GOOGLE_API_KEY).
+# Add API keys as repository secrets (ANTHROPIC_API_KEY, GEMINI_API_KEY).
 on:
   workflow_dispatch:
     inputs:
@@ -16,7 +16,7 @@ jobs:
     runs-on: ubuntu-latest
     env:
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-      GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
+      GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5

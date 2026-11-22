@@ -14,9 +14,9 @@ class Settings(BaseSettings):
 
     # Default LLM (the API serves /query; benchmarks pick models from evals/models.yaml)
     llm_provider: str = "gemini"  # gemini | anthropic | openai_compat
-    llm_model: str = "gemini-2.0-flash"
+    llm_model: str = "gemini-3.8-flash"
     llm_base_url: str = ""  # openai_compat only, e.g. http://localhost:8001/v1
-    llm_api_key_env: str = "GOOGLE_API_KEY"  # NAME of the env var holding the key
+    llm_api_key_env: str = "GEMINI_API_KEY"  # NAME of the env var holding the key (GOOGLE_API_KEY also accepted)
     google_api_key: str = ""  # kept for .env convenience / backwards compatibility
 
 

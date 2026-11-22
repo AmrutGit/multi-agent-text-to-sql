@@ -2,7 +2,7 @@
 
 Agents depend on that function only, so providers are swappable and tests patch one
 name. Providers:
-  gemini         google-generativeai SDK
+  gemini         google-genai SDK
   anthropic      Messages API over plain HTTPS
   openai_compat  any OpenAI-style /chat/completions server: OpenAI itself, vLLM,
                  Ollama (/v1), llama.cpp server... i.e. how a locally served QLoRA
@@ -19,6 +19,9 @@ import urllib.request
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
+from functools import lru_cache
+
+from dotenv import dotenv_values
 
 from src.config import settings
 
@@ -75,11 +78,27 @@ def track():
         _calls.reset(tok)
 
 
+# google-genai reads GEMINI_API_KEY; older setups of this repo used GOOGLE_API_KEY.
+_KEY_ALIASES = {"GEMINI_API_KEY": ("GOOGLE_API_KEY",), "GOOGLE_API_KEY": ("GEMINI_API_KEY",)}
+
+
+@lru_cache(maxsize=1)
+def _env_file_values() -> dict:
+    """Keys from ./.env, so ANTHROPIC_API_KEY etc. work without exporting them."""
+    return {k: v for k, v in dotenv_values(".env").items() if v}
+
+
 def _api_key(cfg: ModelConfig) -> str:
-    key = os.environ.get(cfg.api_key_env, "") if cfg.api_key_env else ""
-    if not key and cfg.api_key_env == "GOOGLE_API_KEY":
-        key = settings.google_api_key  # value loaded from .env
-    return key
+    """Environment first, then ./.env. Returns "" when the key is not set anywhere."""
+    if not cfg.api_key_env:
+        return ""
+    for name in (cfg.api_key_env, *_KEY_ALIASES.get(cfg.api_key_env, ())):
+        key = os.environ.get(name) or _env_file_values().get(name)
+        if key:
+            return key
+    if cfg.api_key_env in _KEY_ALIASES:
+        return settings.google_api_key  # legacy pydantic setting, kept for backwards compatibility
+    return ""
 
 
 def _post_json(url: str, headers: dict, body: dict, timeout: float, retries: int = 3) -> dict:
@@ -143,28 +162,45 @@ def _openai_compat(cfg: ModelConfig, system: str, user: str) -> tuple[str, int, 
     return text, u.get("prompt_tokens", 0), u.get("completion_tokens", 0)
 
 
-_gemini_configured = False
+_gemini_clients: dict[str, object] = {}  # one client per API key; created lazily
 
 
-def _gemini(cfg: ModelConfig, system: str, user: str) -> tuple[str, int, int]:
-    global _gemini_configured
-    import google.generativeai as genai  # lazy: only needed for this provider
+def _gemini_client(key: str):
+    from google import genai  # lazy: only needed for this provider
 
-    if not _gemini_configured:
-        key = _api_key(cfg)
-        if not key:
-            raise RuntimeError("GOOGLE_API_KEY is empty — copy .env.example to .env and set it.")
-        genai.configure(api_key=key)
-        _gemini_configured = True
-    model = genai.GenerativeModel(cfg.model, system_instruction=system,
-                                  generation_config={"temperature": cfg.temperature or 0})
-    resp = model.generate_content(user)
-    try:
-        text = resp.text
-    except ValueError as e:  # blocked / empty candidate: .text raises
-        raise RuntimeError(f"LLM returned no text (blocked or empty response): {e}") from e
-    um = getattr(resp, "usage_metadata", None)
-    return text, getattr(um, "prompt_token_count", 0) or 0, getattr(um, "candidates_token_count", 0) or 0
+    if key not in _gemini_clients:
+        _gemini_clients[key] = genai.Client(api_key=key)
+    return _gemini_clients[key]
+
+
+def _gemini(cfg: ModelConfig, system: str, user: str, retries: int = 3) -> tuple[str, int, int]:
+    from google.genai import errors, types
+
+    key = _api_key(cfg)
+    if not key:
+        raise RuntimeError(f"{cfg.api_key_env or 'GEMINI_API_KEY'} is empty — set it in .env or the environment.")
+    config = types.GenerateContentConfig(
+        system_instruction=system, max_output_tokens=cfg.max_tokens, temperature=cfg.temperature,
+        thinking_config=types.ThinkingConfig(thinking_level=cfg.effort) if cfg.effort else None,
+    )
+    for attempt in range(retries + 1):  # same backoff policy as the HTTP providers
+        try:
+            resp = _gemini_client(key).models.generate_content(model=cfg.model, contents=user, config=config)
+            break
+        except errors.APIError as e:
+            if e.code in (429, 500, 502, 503, 504) and attempt < retries:
+                time.sleep(2 ** attempt)
+                continue
+            raise RuntimeError(f"LLM HTTP {e.code}: {str(e)[:300]}") from e
+    text = resp.text  # None when blocked or empty
+    if not text:
+        reason = resp.candidates[0].finish_reason if resp.candidates else "no candidates"
+        raise RuntimeError(f"LLM returned no text (blocked or empty response): {reason}")
+    um = resp.usage_metadata
+    tin = (um.prompt_token_count or 0) if um else 0
+    # Thinking tokens are billed as output, so they count toward cost.
+    tout = ((um.candidates_token_count or 0) + (um.thoughts_token_count or 0)) if um else 0
+    return text, tin, tout
 
 
 _PROVIDERS = {"gemini": _gemini, "anthropic": _anthropic, "openai_compat": _openai_compat}

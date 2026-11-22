@@ -131,6 +131,70 @@ def test_anthropic_refusal_is_an_error(server, monkeypatch):
         llm.complete("a", "b")
 
 
+def test_key_read_from_env_file_and_alias(monkeypatch):
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+    monkeypatch.delenv("GOOGLE_API_KEY", raising=False)
+    monkeypatch.setattr(llm, "_env_file_values", lambda: {"GOOGLE_API_KEY": "from-file"})
+    assert llm._api_key(llm.ModelConfig("g", "gemini", "m", api_key_env="GEMINI_API_KEY")) == "from-file"
+    monkeypatch.setenv("GEMINI_API_KEY", "from-env")
+    assert llm._api_key(llm.ModelConfig("g", "gemini", "m", api_key_env="GEMINI_API_KEY")) == "from-env"
+
+
+class _FakeGenai:
+    """Stands in for google.genai.Client: records the call, returns a canned response."""
+
+    def __init__(self, resp=None, exc=None):
+        self.calls, self.resp, self.exc = [], resp, list(exc or [])
+        self.models = self
+
+    def generate_content(self, model, contents, config):
+        self.calls.append({"model": model, "contents": contents, "config": config})
+        if self.exc:
+            raise self.exc.pop(0)
+        return self.resp
+
+
+def _gemini_resp(text, prompt=7, cand=4, thoughts=30):
+    from types import SimpleNamespace as NS
+    return NS(text=text, candidates=[NS(finish_reason="STOP")],
+              usage_metadata=NS(prompt_token_count=prompt, candidates_token_count=cand, thoughts_token_count=thoughts))
+
+
+def test_gemini_request_and_thinking_tokens_count_as_output(monkeypatch):
+    fake = _FakeGenai(_gemini_resp("SELECT 4"))
+    monkeypatch.setattr(llm, "_gemini_client", lambda key: fake)
+    monkeypatch.setenv("GEMINI_API_KEY", "g")
+    cfg = llm.ModelConfig("gf", "gemini", "gemini-3.8-flash", api_key_env="GEMINI_API_KEY",
+                          temperature=None, effort="medium", max_tokens=8192)
+    with llm.use_model(cfg), llm.track() as calls:
+        assert llm.complete("sys", "usr") == "SELECT 4"
+    c = fake.calls[0]
+    assert c["model"] == "gemini-3.8-flash" and c["contents"] == "usr"
+    assert c["config"].system_instruction == "sys" and c["config"].temperature is None
+    assert c["config"].thinking_config.thinking_level.lower() == "medium"
+    assert c["config"].max_output_tokens == 8192
+    assert (calls[0]["in_tokens"], calls[0]["out_tokens"]) == (7, 34)  # 4 answer + 30 thinking
+
+
+def test_gemini_empty_response_is_an_error(monkeypatch):
+    monkeypatch.setattr(llm, "_gemini_client", lambda key: _FakeGenai(_gemini_resp(None)))
+    monkeypatch.setenv("GEMINI_API_KEY", "g")
+    with llm.use_model(llm.ModelConfig("gf", "gemini", "m", api_key_env="GEMINI_API_KEY")), \
+            pytest.raises(RuntimeError, match="no text"):
+        llm.complete("a", "b")
+
+
+def test_gemini_retries_429_then_succeeds(monkeypatch):
+    from google.genai import errors
+    monkeypatch.setattr(llm.time, "sleep", lambda s: None)
+    fake = _FakeGenai(_gemini_resp("ok"), exc=[errors.APIError(429, {"error": {"message": "slow"}})])
+    monkeypatch.setattr(llm, "_gemini_client", lambda key: fake)
+    monkeypatch.setenv("GEMINI_API_KEY", "g")
+    with llm.use_model(llm.ModelConfig("gf", "gemini", "m", api_key_env="GEMINI_API_KEY")):
+        assert llm.complete("a", "b") == "ok"
+    assert len(fake.calls) == 2
+
+
 def test_unknown_provider():
     with llm.use_model(llm.ModelConfig("m", "nope", "m")), pytest.raises(RuntimeError, match="Unknown provider"):
         llm.complete("a", "b")

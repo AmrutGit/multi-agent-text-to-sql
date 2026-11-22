@@ -31,7 +31,11 @@ def test_rejects_empty_question():
 
 
 def test_llm_misconfiguration_is_503(monkeypatch):
+    from src import llm
     from src.config import settings
     monkeypatch.setattr(settings, "google_api_key", "")
+    monkeypatch.setattr(llm, "_env_file_values", dict)  # ignore a developer's local .env
+    for name in ("GEMINI_API_KEY", "GOOGLE_API_KEY"):
+        monkeypatch.delenv(name, raising=False)
     r = client.post("/query", json={"question": "How many customers are there?"})
     assert r.status_code == 503

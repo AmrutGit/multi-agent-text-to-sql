@@ -1,5 +1,5 @@
 """Execution accuracy: does the agent's SQL return the same rows as gold_sql?
-Scores whatever the orchestrator produces. Run: `make eval` (needs GOOGLE_API_KEY).
+Scores whatever the orchestrator produces. Run: `make eval` (needs GEMINI_API_KEY).
 
 Comparison is order-insensitive and rounds floats, so semantically equal results that
 differ only in row order or float noise (sum order) still match.
