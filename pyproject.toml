@@ -1,0 +1,21 @@
+# Packaging so other repos can reuse the evaluation harness as a git dependency:
+#   pip install "multi-agent-text-to-sql @ git+https://github.com/AmrutGit/multi-agent-text-to-sql@<commit>"
+# The base install has no dependencies: evals.metrics, evals.datasets and evals.report use
+# only the standard library. The API and agents need the `app` extra.
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "multi-agent-text-to-sql"
+version = "0.2.0"
+description = "Multi-agent text-to-SQL pipeline and BIRD/Spider evaluation harness"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = []
+
+[project.optional-dependencies]
+app = ["fastapi", "uvicorn[standard]", "pydantic-settings", "pyyaml", "python-dotenv", "google-genai"]
+
+[tool.setuptools]
+packages = ["src", "src.agents", "src.api", "src.db", "evals"]
