@@ -87,6 +87,32 @@ def test_api_models_are_priced_and_send_no_temperature():
         assert m.temperature is None and m.effort == "medium"
 
 
+def _fake_record(ex, cost):
+    return {"id": ex, "correct": True, "cost_usd": cost}
+
+
+def test_budget_stops_before_next_batch():
+    recs, stopped = benchmark.run_with_budget(list(range(10)), lambda e: _fake_record(e, 0.5), 2, max_usd=1.0)
+    assert stopped and len(recs) == 2  # batch 1 spends $1.00 -> batch 2 never starts
+
+
+def test_budget_none_or_unpriced_runs_everything():
+    recs, stopped = benchmark.run_with_budget(list(range(5)), lambda e: _fake_record(e, None), 2, max_usd=0.01)
+    assert not stopped and [r["id"] for r in recs] == list(range(5))  # order preserved
+    recs, stopped = benchmark.run_with_budget(list(range(5)), lambda e: _fake_record(e, 9.0), 3, max_usd=None)
+    assert not stopped and len(recs) == 5
+
+
+def test_report_flags_budget_stopped_run(tmp_path):
+    p = tmp_path / "a.jsonl"
+    _write_run(p, "modelA", {i: True for i in range(3)})
+    lines = p.read_text().splitlines()
+    meta = json.loads(lines[0])
+    meta["_meta"].update(stopped_by_budget=True, n=10)
+    p.write_text("\n".join([json.dumps(meta), *lines[1:]]) + "\n")
+    assert "stopped by --max-usd" in report.render([report.load(str(p))])
+
+
 def _write_run(path, model, correct_by_id, retries=2):
     meta = {"_meta": {"model": model, "dataset": "bird", "n": len(correct_by_id), "seed": 0,
                       "retries": retries, "schema_mode": "retrieve", "evidence": True}}

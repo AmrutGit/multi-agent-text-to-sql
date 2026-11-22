@@ -80,6 +80,25 @@ def _evaluate_with_gold(ex, *, cfg, gold, retries, schema_mode, use_evidence, ti
     return evaluate_one(ex, cfg, gold[ex.id], retries, schema_mode, use_evidence, timeout_s)
 
 
+def run_with_budget(examples: list, fn, workers: int, max_usd: float | None) -> tuple[list[dict], bool]:
+    """Evaluate `examples` in batches of `workers`; stop before the next batch once the
+    measured spend reaches `max_usd`. Returns (records, stopped_early).
+
+    Batching keeps the overshoot to at most one batch of questions. Unpriced models
+    (cost_usd None) are never stopped.
+    """
+    records: list[dict] = []
+    spent = 0.0
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        for i in range(0, len(examples), workers):
+            if max_usd is not None and spent >= max_usd:
+                return records, True
+            batch = list(pool.map(fn, examples[i:i + workers]))
+            spent += sum(r.get("cost_usd") or 0.0 for r in batch)
+            records += batch
+    return records, False
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawTextHelpFormatter)
     ap.add_argument("--dataset", choices=sorted(LOADERS), required=True)
@@ -94,6 +113,8 @@ def main(argv=None):
     ap.add_argument("--workers", type=int, default=4)
     ap.add_argument("--timeout", type=float, default=30.0, help="per-query seconds")
     ap.add_argument("--tag", default="", help="suffix for result file names (e.g. 'noretry')")
+    ap.add_argument("--max-usd", type=float, default=None,
+                    help="stop a model's run once its measured API spend reaches this (per model)")
     args = ap.parse_args(argv)
 
     settings.query_timeout_s = args.timeout
@@ -116,20 +137,23 @@ def main(argv=None):
     for name in wanted:
         cfg = models[name]
         print(f"\n== {name} ({cfg.provider}:{cfg.model})")
-        with ThreadPoolExecutor(max_workers=args.workers) as pool:
-            records = list(pool.map(
-                partial(_evaluate_with_gold, cfg=cfg, gold=gold, retries=args.retries,
-                        schema_mode=args.schema_mode, use_evidence=not args.no_evidence,
-                        timeout_s=args.timeout), examples))
+        fn = partial(_evaluate_with_gold, cfg=cfg, gold=gold, retries=args.retries,
+                     schema_mode=args.schema_mode, use_evidence=not args.no_evidence, timeout_s=args.timeout)
+        records, stopped = run_with_budget(examples, fn, args.workers, args.max_usd)
         scored = [r for r in records if r["correct"] is not None]
         k = sum(r["correct"] for r in scored)
-        print(f"   execution accuracy: {k}/{len(scored)} ({k / max(len(scored), 1):.0%})")
+        spent = sum(r.get("cost_usd") or 0.0 for r in records)
+        print(f"   execution accuracy: {k}/{len(scored)} ({k / max(len(scored), 1):.0%}), spend ${spent:.4f}")
+        if stopped:
+            print(f"   STOPPED at --max-usd {args.max_usd}: {len(records)}/{len(examples)} questions run")
         meta = {"_meta": {
             "model": name, "provider": cfg.provider, "model_id": cfg.model, "dataset": args.dataset,
             "n": len(examples), "seed": args.seed, "retries": args.retries,
             "schema_mode": args.schema_mode, "evidence": not args.no_evidence, "git_sha": sha,
             "timestamp": datetime.now(timezone.utc).isoformat(timespec="seconds"),
-            "price_in": cfg.price_in, "price_out": cfg.price_out,
+            "price_in": cfg.price_in, "price_out": cfg.price_out, "effort": cfg.effort,
+            "temperature": cfg.temperature, "workers": args.workers,
+            "spend_usd": round(spent, 6), "stopped_by_budget": stopped,
         }}
         tag = f"__{args.tag}" if args.tag else ""
         out = RESULTS_DIR / f"{name}__{args.dataset}__n{len(examples)}__r{args.retries}__{args.schema_mode}{tag}.jsonl"

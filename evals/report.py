@@ -121,6 +121,10 @@ def render(runs: list[dict]) -> str:
                 ob = sum(b[q] and not a[q] for q in shared)
                 out.append(f"| {label(runs[i])} | {label(runs[j])} | {oa} | {ob} | {sign_test(oa, ob):.2f} |")
         out.append("\n_p < 0.05 is the usual bar; above it, the difference may be noise at this sample size._")
+    for r in runs:
+        if r["meta"].get("stopped_by_budget"):
+            out.append(f"\n_{label(r)} was stopped by --max-usd after {len(r['records'])} of "
+                       f"{r['meta']['n']} questions; its numbers cover only those._")
     if any(s["gold_errors"] for s in sums):
         out.append(f"\n_{sums[0]['gold_errors']} question(s) excluded: the gold SQL itself failed to execute._")
     return "\n".join(out)
