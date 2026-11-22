@@ -1,10 +1,24 @@
 # Multi-Agent Text-to-SQL, with an evaluation harness
 
-Ask a database questions in plain English. A small graph of cooperating agents
-retrieves the relevant schema, writes SQL, validates and self-corrects it, runs it
-read-only, and explains the result. The repo also contains the harness used to
-**measure** it on the BIRD benchmark: accuracy, failure types, latency and cost, across
-API models and a locally served fine-tuned model.
+[![CI](https://github.com/AmrutGit/multi-agent-text-to-sql/actions/workflows/ci.yml/badge.svg)](https://github.com/AmrutGit/multi-agent-text-to-sql/actions/workflows/ci.yml)
+
+- **What:** plain-English questions → schema context → SQL writer → validator with self-correction → read-only execution → explanation. Hand-rolled Python, FastAPI, SQLite.
+- **Harness:** BIRD dev loader, execution accuracy with 95% CI, automatic failure taxonomy, p50/p95 latency, $ per question, paired sign test, spend cap (`--max-usd`).
+- **Measured so far (no LLM):** on all 1,534 BIRD dev questions the validator rejects 0 gold queries; lexical schema retrieval keeps every needed table on 85.7%.
+- **Not measured yet:** model accuracy, latency and cost for Gemini 3.8 Flash and Claude Haiku 5.5. The run is one command ([How to reproduce](#how-to-reproduce)).
+
+### Headline results
+
+| Measurement (BIRD dev) | Result | Command |
+|---|---|---|
+| Validator false rejections on gold SQL | 0 / 1,534 | `python -m evals.audit --dataset bird --data-dir data/bird_raw` |
+| Lexical retrieval keeps all needed tables | 85.7% | same |
+| Execution accuracy, Gemini 3.8 Flash (n=200, r0 / r2) | not measured yet | `make bench MODELS=gemini-flash N=200` (see below) |
+| Execution accuracy, Claude Haiku 5.5 (n=200, r0 / r2) | not measured yet | `make bench MODELS=claude-haiku N=200` |
+| p50/p95 latency, $/question, self-correction yield, paired p-value | not measured yet | `make report` |
+
+The model rows are filled by pasting the output of `make report` unchanged; no number
+in this README is typed by hand.
 
 ```mermaid
 flowchart LR
@@ -21,16 +35,13 @@ flowchart LR
 
 | | State |
 |---|---|
-| Pipeline, validator, self-correction loop, API | Done, 92 automated tests |
+| Pipeline, validator, self-correction loop, API | Done, 106 automated tests |
 | Benchmark harness (BIRD loader, execution accuracy, failure classifier, latency/cost, CI) | Done and validated on the real BIRD dev set (below) |
 | Deterministic-component audit on all 1,534 BIRD dev questions | **Measured** (below) |
-| **Model accuracy / latency / cost on 50+ questions** | **Not run yet.** Needs API keys and/or your served model. One command, see [Reproduce](#reproduce) |
+| **Model accuracy / latency / cost** | **Not run yet.** Needs `GEMINI_API_KEY` / `ANTHROPIC_API_KEY`. See [How to reproduce](#how-to-reproduce) |
 | **QLoRA Llama vs API models** | **Not run yet.** The adapter is not in this repo; see [Evaluating the fine-tuned model](#evaluating-the-fine-tuned-model) |
 
-No model numbers appear in this README because none have been produced. The
-results table is filled in by `make report`, not by hand.
-
-## Results
+## Results (detail)
 
 ### 1. Measured: the parts that need no LLM (all 1,534 BIRD dev questions)
 
@@ -39,7 +50,7 @@ results table is filled in by `make report`, not by hand.
 | Check | Result |
 |---|---|
 | Validator false rejections on gold SQL | **0 / 1,534**: the safety guard never blocks a valid benchmark query |
-| Harness check: a stand-in "model" that returns the gold SQL, scored on all 1,534 | 1,524 pass. The other 10 are not harness faults: 9 were a lookup bug in my throwaway stand-in script (evidence strings containing newlines), and 1 slow gold query (`bird-596`) hit the 30 s timeout under 8-way load. This validates scoring, not any model |
+| Harness check: a stand-in "model" that returns the gold SQL, scored on all 1,534 | 1,524 pass. The other 10 are not harness faults: 9 were a lookup bug in the throwaway stand-in script (evidence strings containing newlines), and 1 slow gold query (`bird-596`) hit the 30 s timeout under 8-way load. This validates scoring, not any model |
 | Lexical schema retrieval: all needed tables kept | **85.7 %** → a hard ceiling: 14.3 % of questions are unanswerable before the model sees them |
 | Prompt size with retrieval vs full schema | 63 % (2.3k vs 3.7k chars): retrieval saves little because BIRD schemas are small |
 | Largest BIRD schema | 7.3k chars (~2k tokens) |
@@ -50,29 +61,27 @@ Retrieval recall by database shows where it breaks: `debit_card_specializing` 47
 **Decision driven by this data:** `schema_mode=auto` (default). If the full schema fits a
 budget (12k chars) it is sent whole; retrieval is used only for larger schemas. At BIRD
 sizes retrieval bought a ~37 % smaller prompt at the cost of a 14 % accuracy ceiling.
-That is a bad trade; at BIRD sizes, auto never retrieves. I keep the retriever (and
-measure it) because it is the right tool once a schema stops fitting in a prompt.
+That is a bad trade; at BIRD sizes, auto never retrieves. The retriever stays (and is
+measured) because it is the right tool once a schema stops fitting in a prompt.
 
 The audit also drove two fixes: sub-word matching ("SAT" → `satscores`, +1 pt overall,
 but mixed: `california_schools` 72 → 96 %, `superhero` 90 → 66 %) and removing a
 non-determinism bug in join-path selection that made recall vary between runs
 (now regression-tested across hash seeds).
 
-### 2. Model comparison: *to be generated*
-
-```bash
-make bird                                   # one-off download (~350 MB)
-make bench MODELS=gemini-flash,claude-haiku,qlora-llama N=50
-make report                                 # writes the table below
-```
+### 2. Model comparison: not measured yet
 
 `make report` produces, per model: execution accuracy with a 95 % Wilson interval,
 accuracy by difficulty, failure-type counts, p50/p95 latency, tokens, $/question, the
-self-correction yield, and a paired significance test. Paste the output here.
+self-correction yield, and a paired significance test. Its output replaces this
+paragraph unchanged. Commands: [How to reproduce](#how-to-reproduce).
 
-| Model | Exec. acc. (95 % CI) | Easy / Med / Hard | p50 / p95 s | $/question | Top failure |
-|---|---|---|---|---|---|
-| _run `make bench`_ | | | | | |
+Planned configuration: BIRD dev, n=200, stratified by difficulty, seed 0, `--workers 1`,
+each model at `--retries 0` and `--retries 2`, provider-default sampling, effort
+`medium` (see `evals/models.yaml` for model IDs, prices and the date they were read).
+Estimated API cost of all four runs: about USD 2–4, dominated by Gemini thinking tokens
+(estimate from ~1.5k input tokens and an assumed ~1k output+thinking tokens per call;
+the real figure is printed by the run and capped by `--max-usd`).
 
 **Read it with the right error bars.** At n=50 an accuracy of 60 % is really
 "between 46 % and 72 %". Two models 8 points apart are usually statistically
@@ -163,17 +172,24 @@ Things that will otherwise make the comparison unfair (check each):
   zero but GPU time is not: compute `GPU $/hour / (questions/hour)` from a
   `--workers 1` run and add it to the report by hand.
 
-## Reproduce
+## How to reproduce
 
 ```bash
+python -m venv .venv && . .venv/bin/activate        # Windows: .venv\Scripts\activate
 pip install -r requirements-dev.txt
-cp .env.example .env            # add keys
-make data                       # Northwind (quick demo DB)
-make test                       # 92 tests, no API keys, no network except `make data`
-make bird                       # BIRD dev (benchmark)
-make audit                      # no LLM needed
-make bench MODELS=gemini-flash N=50
-make report
+cp .env.example .env                                # set GEMINI_API_KEY and ANTHROPIC_API_KEY
+make data                                           # Northwind (quick demo DB)
+make test                                           # no API keys; network only for `make data`
+make bird                                           # BIRD dev, one-off ~350 MB
+make audit                                          # deterministic audit, no LLM
+
+# the benchmark: 2 models x 2 retry budgets, identical 200 questions
+for r in 0 2; do
+  python -m evals.benchmark --dataset bird --data-dir data/bird_raw -n 200 --seed 0 \
+      --models gemini-flash,claude-haiku --retries $r --workers 1 --max-usd 4
+done
+make report                                         # paste the output into Results unchanged
+python -m evals.report --failures evals/results/gemini-flash__bird__n200__r2__auto.jsonl
 ```
 
 `make run` serves `POST /query {"question": "..."}` on Northwind. `make eval` is a quick
@@ -196,6 +212,8 @@ make report
 
 ## Design decisions
 
+<!-- draft: author to rewrite -->
+
 - **Hand-rolled orchestration.** ~40 lines of plain Python; every step debuggable.
 - **Defence in depth for safety.** (1) validator: single `SELECT`/`WITH` only; (2)
   `EXPLAIN` checks the plan without running; (3) read-only SQLite connection; (4)
@@ -215,8 +233,7 @@ make report
 then the full test suite. Tests fake all model calls and use tiny SQLite fixtures plus a
 fake local HTTP server for the providers, so they need no keys and are fast (~5 s).
 `benchmark.yml` is **manual-only** (`workflow_dispatch`): it spends API money, so it
-does not run per commit. Neither workflow has been executed on GitHub yet; I could only
-validate their syntax and run the same commands locally.
+does not run per commit, and it has not been run.
 
 ## Limitations
 
@@ -226,8 +243,11 @@ validate their syntax and run the same commands locally.
   No sample-value or column-description grounding yet, a known big win on BIRD.
 - Validate-and-retry cannot catch logically wrong but executable SQL.
 - Single-turn; ambiguous questions are guessed, not clarified.
-- Uses the deprecated `google-generativeai` SDK for Gemini; migrating to `google-genai`
-  is a change to `src/llm.py` only (not done: I could not install/verify it here).
+- Spider is supported by the loader (`--dataset spider`) but has not been benchmarked;
+  only a synthetic-layout test covers it.
+- API models run with provider-default sampling (Claude Haiku 5.5 rejects
+  `temperature=0`), so repeated runs can differ. Run-to-run variance is not measured yet.
+- The fine-tuned model is evaluated in a separate repo (`text2sql-qlora`), on Spider.
 - BIRD gold SQL contains some errors and ambiguities; treat the ceiling as <100 %.
 
 ## Tech stack
