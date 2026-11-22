@@ -33,7 +33,13 @@ class ModelConfig:
     price_in: float | None = None  # USD per 1M input tokens; None = unknown
     price_out: float | None = None  # USD per 1M output tokens
     max_tokens: int = 1024
+    # None = do not send the parameter (provider default). Claude Haiku 5.5 rejects any
+    # non-default sampling value with HTTP 400, so it must be None there.
     temperature: float | None = 0.0
+    # Reasoning depth for models that think by default. Sent as `output_config.effort`
+    # (Anthropic) or `thinking_level` (Gemini). None = provider default. Set explicitly in
+    # models.yaml so a provider changing its default cannot silently change results.
+    effort: str | None = None
     timeout_s: float = 120.0
 
 
@@ -106,9 +112,14 @@ def _anthropic(cfg: ModelConfig, system: str, user: str) -> tuple[str, int, int]
             "messages": [{"role": "user", "content": user}]}
     if cfg.temperature is not None:
         body["temperature"] = cfg.temperature
+    if cfg.effort:
+        body["output_config"] = {"effort": cfg.effort}
     out = _post_json(cfg.base_url.rstrip("/") + "/v1/messages" if cfg.base_url
                      else "https://api.anthropic.com/v1/messages",
                      {"x-api-key": key, "anthropic-version": "2023-06-01"}, body, cfg.timeout_s)
+    if out.get("stop_reason") == "refusal":  # HTTP 200, but no answer: a provider failure, not SQL
+        raise RuntimeError(f"LLM refused the request: {out.get('stop_details')}")
+    # Thinking blocks are skipped; their tokens are already inside usage.output_tokens.
     text = "".join(b.get("text", "") for b in out.get("content", []) if b.get("type") == "text")
     u = out.get("usage", {})
     return text, u.get("input_tokens", 0), u.get("output_tokens", 0)

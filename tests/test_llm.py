@@ -109,6 +109,28 @@ def test_client_error_is_not_retried(server):
     assert len(s.requests) == 1
 
 
+def test_anthropic_effort_and_no_temperature(server, monkeypatch):
+    """Haiku 5.5 rejects sampling params: temperature=None must leave the field out."""
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "k")
+    s = server([(200, {"content": [{"type": "thinking", "thinking": ""}, {"type": "text", "text": "SELECT 3"}],
+                       "stop_reason": "end_turn", "usage": {"input_tokens": 9, "output_tokens": 40}})])
+    cfg = llm.ModelConfig("h", "anthropic", "claude-haiku-5-5", base_url=s.url, api_key_env="ANTHROPIC_API_KEY",
+                          temperature=None, effort="medium")
+    with llm.use_model(cfg), llm.track() as calls:
+        assert llm.complete("sys", "usr") == "SELECT 3"  # thinking block skipped
+    body = s.requests[0]["body"]
+    assert "temperature" not in body and body["output_config"] == {"effort": "medium"}
+    assert calls[0]["out_tokens"] == 40
+
+
+def test_anthropic_refusal_is_an_error(server, monkeypatch):
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "k")
+    s = server([(200, {"content": [], "stop_reason": "refusal", "stop_details": {"category": None}})])
+    cfg = llm.ModelConfig("h", "anthropic", "m", base_url=s.url, api_key_env="ANTHROPIC_API_KEY")
+    with llm.use_model(cfg), pytest.raises(RuntimeError, match="refused"):
+        llm.complete("a", "b")
+
+
 def test_unknown_provider():
     with llm.use_model(llm.ModelConfig("m", "nope", "m")), pytest.raises(RuntimeError, match="Unknown provider"):
         llm.complete("a", "b")
