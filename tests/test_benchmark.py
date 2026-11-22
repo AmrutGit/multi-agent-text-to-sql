@@ -79,6 +79,14 @@ def test_models_yaml_is_valid():
     assert models["qlora-llama"].provider == "openai_compat"
 
 
+def test_api_models_are_priced_and_send_no_temperature():
+    models = benchmark.load_models()
+    for name in ("gemini-flash", "claude-haiku"):
+        m = models[name]
+        assert m.price_in and m.price_out and m.price_out > m.price_in
+        assert m.temperature is None and m.effort == "medium"
+
+
 def _write_run(path, model, correct_by_id, retries=2):
     meta = {"_meta": {"model": model, "dataset": "bird", "n": len(correct_by_id), "seed": 0,
                       "retries": retries, "schema_mode": "retrieve", "evidence": True}}

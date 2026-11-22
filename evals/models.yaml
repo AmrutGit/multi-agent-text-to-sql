@@ -1,7 +1,19 @@
 # Models to benchmark. `api_key_env` is the NAME of an environment variable, never a key.
-# price_in / price_out: USD per 1M tokens. Left null where I could not verify current
-# pricing: fill from the provider's pricing page and cost columns light up in the report
-# (null => cost shown as n/a, never guessed).
+# price_in / price_out: USD per 1M tokens, standard (non-batch) API rates. null => cost
+# shown as n/a in the report, never guessed.
+#
+# Prices read 2026-11-22 from the official pages:
+#   Anthropic: https://platform.claude.com/docs/en/about-claude/pricing
+#   Google:    https://aistudio.google.com/docs/pricing  (was ai.google.dev/gemini-api/docs/pricing)
+# Re-check before a new run: Gemini 3.8 Flash doubles to $1.50 / $7.50 on 2027-01-01.
+#
+# temperature: null => parameter not sent (provider default). Claude Haiku 5.5 rejects
+# non-default sampling values with HTTP 400; Gemini is run the same way so that both API
+# models use provider-default sampling. Consequence: runs are not bit-for-bit repeatable.
+# effort: reasoning depth (Anthropic output_config.effort / Gemini thinking_level). Both
+# models think by default at "medium"; it is set explicitly so a provider-side default
+# change cannot silently change results. Thinking tokens are billed as output and are
+# counted in out_tokens. max_tokens includes thinking, hence 8192 rather than 1024.
 #
 # Add your QLoRA Llama here once it is served. Any OpenAI-compatible server works:
 #   vLLM:      vllm serve <base> --enable-lora --lora-modules sql=<adapter_dir> --port 8001
@@ -12,24 +24,33 @@
 
 gemini-flash:
   provider: gemini
-  model: gemini-2.0-flash
-  api_key_env: GOOGLE_API_KEY
-  price_in: null
-  price_out: null
+  model: gemini-3.8-flash      # gemini-2.0-flash was shut down 2026-06-01 (Google deprecations page)
+  api_key_env: GEMINI_API_KEY  # GOOGLE_API_KEY is accepted as a fallback
+  price_in: 0.75               # text input, through 2026-12-31
+  price_out: 3.75              # output incl. thinking, through 2026-12-31
+  temperature: null
+  effort: medium
+  max_tokens: 8192
 
 claude-haiku:
   provider: anthropic
   model: claude-haiku-5-5
   api_key_env: ANTHROPIC_API_KEY
-  price_in: null
-  price_out: null
+  price_in: 0.10               # prompts up to 100k tokens (BIRD prompts are ~2k)
+  price_out: 0.50
+  temperature: null            # required: non-default values return HTTP 400
+  effort: medium
+  max_tokens: 8192
 
 claude-sonnet:
   provider: anthropic
   model: claude-sonnet-5-5
   api_key_env: ANTHROPIC_API_KEY
-  price_in: null
-  price_out: null
+  price_in: 2.00
+  price_out: 10.00
+  temperature: null
+  effort: medium
+  max_tokens: 8192
 
 qlora-llama:
   provider: openai_compat
