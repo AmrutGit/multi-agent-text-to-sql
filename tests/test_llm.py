@@ -80,8 +80,26 @@ def test_anthropic_request_shape(server, monkeypatch):
         assert llm.complete("sys", "usr") == "SELECT 2"
     r = s.requests[0]
     assert r["path"] == "/v1/messages" and r["headers"]["x-api-key"] == "k"
-    assert r["body"]["system"] == "sys" and r["body"]["messages"][0]["content"] == "usr"
+    assert r["body"]["system"] == [{"type": "text", "text": "sys", "cache_control": {"type": "ephemeral"}}]
+    assert r["body"]["messages"][0]["content"] == "usr"
     assert (calls[0]["in_tokens"], calls[0]["out_tokens"]) == (5, 2)
+
+
+def test_anthropic_cache_usage_is_tracked_and_priced(server, monkeypatch):
+    """input_tokens excludes cached tokens; in_tokens must be the full prompt size."""
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "k")
+    s = server([(200, {"content": [{"type": "text", "text": "SELECT 1"}],
+                       "usage": {"input_tokens": 10, "output_tokens": 20,
+                                 "cache_creation_input_tokens": 0, "cache_read_input_tokens": 1000}})])
+    cfg = llm.ModelConfig("h", "anthropic", "m", base_url=s.url, api_key_env="ANTHROPIC_API_KEY",
+                          price_in=0.10, price_out=0.50, price_cache_read=0.01)
+    with llm.use_model(cfg), llm.track() as calls:
+        llm.complete("sys", "usr")
+    c = calls[0]
+    assert (c["in_tokens"], c["cache_read_tokens"], c["cache_write_tokens"]) == (1010, 1000, 0)
+    from evals.benchmark import cost_usd
+    # 10 uncached * 0.10 + 1000 cached * 0.01 + 20 out * 0.50, per 1M tokens
+    assert cost_usd(cfg, 1010, 20, 0, 1000) == pytest.approx((1.0 + 10.0 + 10.0) / 1_000_000)
 
 
 def test_missing_key_is_a_clear_error(monkeypatch):

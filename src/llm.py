@@ -35,6 +35,10 @@ class ModelConfig:
     api_key_env: str = ""  # NAME of the env var holding the key (never the key itself)
     price_in: float | None = None  # USD per 1M input tokens; None = unknown
     price_out: float | None = None  # USD per 1M output tokens
+    # Prompt-cache prices (USD per 1M). None = standard multipliers of price_in:
+    # 1.25x for a 5-minute cache write, 0.1x for a cache read.
+    price_cache_write: float | None = None
+    price_cache_read: float | None = None
     max_tokens: int = 1024
     # None = do not send the parameter (provider default). Claude Haiku 5.5 rejects any
     # non-default sampling value with HTTP 400, so it must be None there.
@@ -123,11 +127,16 @@ def _post_json(url: str, headers: dict, body: dict, timeout: float, retries: int
     raise RuntimeError("unreachable")
 
 
-def _anthropic(cfg: ModelConfig, system: str, user: str) -> tuple[str, int, int]:
+def _anthropic(cfg: ModelConfig, system: str, user: str) -> tuple[str, int, int, dict]:
     key = _api_key(cfg)
     if not key:
         raise RuntimeError(f"{cfg.api_key_env or 'API key'} is empty — set it in the environment.")
-    body = {"model": cfg.model, "max_tokens": cfg.max_tokens, "system": system,
+    # Prompt caching: the system prompt (rules + schema) is identical for every question on
+    # the same database, and only the user turn changes. Marking the end of the system
+    # prompt caches it for 5 minutes; later calls read it at 0.1x the input price. Prefixes
+    # under the model's minimum (512 tokens on Haiku 5.5) are simply not cached, no error.
+    body = {"model": cfg.model, "max_tokens": cfg.max_tokens,
+            "system": [{"type": "text", "text": system, "cache_control": {"type": "ephemeral"}}],
             "messages": [{"role": "user", "content": user}]}
     if cfg.temperature is not None:
         body["temperature"] = cfg.temperature
@@ -141,7 +150,11 @@ def _anthropic(cfg: ModelConfig, system: str, user: str) -> tuple[str, int, int]
     # Thinking blocks are skipped; their tokens are already inside usage.output_tokens.
     text = "".join(b.get("text", "") for b in out.get("content", []) if b.get("type") == "text")
     u = out.get("usage", {})
-    return text, u.get("input_tokens", 0), u.get("output_tokens", 0)
+    # Anthropic's input_tokens excludes cached tokens. Report the full prompt size as
+    # in_tokens and the cached parts separately, so cost can price each part correctly.
+    cw, cr = u.get("cache_creation_input_tokens") or 0, u.get("cache_read_input_tokens") or 0
+    tin = u.get("input_tokens", 0) + cw + cr
+    return text, tin, u.get("output_tokens", 0), {"cache_write_tokens": cw, "cache_read_tokens": cr}
 
 
 def _openai_compat(cfg: ModelConfig, system: str, user: str) -> tuple[str, int, int]:
@@ -217,8 +230,11 @@ def complete(system: str, user: str) -> str:
     if fn is None:
         raise RuntimeError(f"Unknown provider '{cfg.provider}'. Use one of {sorted(_PROVIDERS)}.")
     start = time.perf_counter()
-    text, tin, tout = fn(cfg, system, user)
+    text, tin, tout, *extra = fn(cfg, system, user)  # extra: optional cache-usage dict
     calls = _calls.get()
     if calls is not None:
-        calls.append({"in_tokens": tin, "out_tokens": tout, "seconds": time.perf_counter() - start})
+        cache = extra[0] if extra else {}
+        calls.append({"in_tokens": tin, "out_tokens": tout, "seconds": time.perf_counter() - start,
+                      "cache_write_tokens": cache.get("cache_write_tokens", 0),
+                      "cache_read_tokens": cache.get("cache_read_tokens", 0)})
     return text

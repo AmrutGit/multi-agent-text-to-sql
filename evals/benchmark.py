@@ -31,10 +31,17 @@ def load_models(path: str = "evals/models.yaml") -> dict[str, llm.ModelConfig]:
     return {name: llm.ModelConfig(name=name, **cfg) for name, cfg in raw.items()}
 
 
-def cost_usd(cfg: llm.ModelConfig, tin: int, tout: int) -> float | None:
+def cost_usd(cfg: llm.ModelConfig, tin: int, tout: int, cache_write: int = 0,
+             cache_read: int = 0) -> float | None:
+    """`tin` is the full prompt size; `cache_write`/`cache_read` are the parts of it that
+    were written to / read from the prompt cache and are priced differently."""
     if cfg.price_in is None or cfg.price_out is None:
         return None
-    return (tin * cfg.price_in + tout * cfg.price_out) / 1_000_000
+    p_write = cfg.price_cache_write if cfg.price_cache_write is not None else 1.25 * cfg.price_in
+    p_read = cfg.price_cache_read if cfg.price_cache_read is not None else 0.1 * cfg.price_in
+    uncached = tin - cache_write - cache_read
+    return (uncached * cfg.price_in + cache_write * p_write + cache_read * p_read
+            + tout * cfg.price_out) / 1_000_000
 
 
 def evaluate_one(ex: Example, cfg: llm.ModelConfig, gold, retries: int, schema_mode: str,
@@ -58,8 +65,10 @@ def evaluate_one(ex: Example, cfg: llm.ModelConfig, gold, retries: int, schema_m
     latency = time.perf_counter() - start
     tin = sum(c["in_tokens"] for c in calls)
     tout = sum(c["out_tokens"] for c in calls)
+    cw = sum(c.get("cache_write_tokens", 0) for c in calls)
+    cr = sum(c.get("cache_read_tokens", 0) for c in calls)
     rec.update(latency_s=round(latency, 3), llm_calls=len(calls), in_tokens=tin, out_tokens=tout,
-               cost_usd=cost_usd(cfg, tin, tout))
+               cache_write_tokens=cw, cache_read_tokens=cr, cost_usd=cost_usd(cfg, tin, tout, cw, cr))
 
     if exc is not None:
         return {**rec, "outcome": "llm_error", "correct": False, "error": f"{type(exc).__name__}: {exc}"}

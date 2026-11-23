@@ -38,6 +38,8 @@ claude-haiku:
   api_key_env: ANTHROPIC_API_KEY
   price_in: 0.10               # prompts up to 100k tokens (BIRD prompts are ~2k)
   price_out: 0.50
+  price_cache_write: 0.125     # 5-minute cache write (pricing page, read 2026-11-23)
+  price_cache_read: 0.01       # cache hit
   temperature: null            # required: non-default values return HTTP 400
   effort: medium
   max_tokens: 8192
@@ -48,6 +50,8 @@ claude-sonnet:
   api_key_env: ANTHROPIC_API_KEY
   price_in: 2.00
   price_out: 10.00
+  price_cache_write: 2.50      # 5-minute cache write (pricing page, read 2026-11-23)
+  price_cache_read: 0.10       # cache hit is 0.05x on Sonnet 5.5, not the usual 0.1x
   temperature: null
   effort: medium
   max_tokens: 8192
